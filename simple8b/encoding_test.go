@@ -200,9 +200,9 @@ func BenchmarkEncode(b *testing.B) {
 	}
 
 	b.ResetTimer()
+	b.SetBytes(int64(len(x) * 8))
 	for i := 0; i < b.N; i++ {
 		simple8b.EncodeAll(x)
-		b.SetBytes(int64(len(x) * 8))
 		total += len(x)
 	}
 }
@@ -215,12 +215,13 @@ func BenchmarkEncoder(b *testing.B) {
 
 	enc := simple8b.NewEncoder()
 	b.ResetTimer()
+	b.SetBytes(int64(len(x)) * 8)
 	for i := 0; i < b.N; i++ {
 		enc.SetValues(x)
 		enc.Bytes()
-		b.SetBytes(int64(len(x)) * 8)
 	}
 }
+
 func BenchmarkDecode(b *testing.B) {
 	total := 0
 
@@ -233,10 +234,31 @@ func BenchmarkDecode(b *testing.B) {
 	decoded := make([]uint64, len(x))
 
 	b.ResetTimer()
+	b.SetBytes(int64(len(x) * 8))
 
 	for i := 0; i < b.N; i++ {
 		_, _ = simple8b.DecodeAll(decoded, y)
-		b.SetBytes(int64(len(decoded) * 8))
+		total += len(decoded)
+	}
+}
+
+func BenchmarkDecodeAligned(b *testing.B) {
+	total := 0
+
+	x := make([]uint64, 1024)
+	for i := 0; i < len(x); i++ {
+		x[i] = uint64(10)
+	}
+	y, _ := simple8b.EncodeAll(x[:])
+
+	var decoded []uint64
+	simple8b.MakeAlignedSlice(1024, &decoded)
+
+	b.ResetTimer()
+	b.SetBytes(int64(len(x) * 8))
+
+	for i := 0; i < b.N; i++ {
+		_, _ = simple8b.DecodeAll(decoded, y)
 		total += len(decoded)
 	}
 }
@@ -251,14 +273,12 @@ func BenchmarkDecoder(b *testing.B) {
 	y, _ := enc.Bytes()
 
 	b.ResetTimer()
+	b.SetBytes(int64(len(x) * 8))
 
 	dec := simple8b.NewDecoder(y)
 	for i := 0; i < b.N; i++ {
 		dec.SetBytes(y)
-		j := 0
 		for dec.Next() {
-			j += 1
 		}
-		b.SetBytes(int64(j * 8))
 	}
 }

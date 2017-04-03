@@ -2,34 +2,38 @@ from peachpy import *
 from peachpy.x86_64 import *
 
 
-def make_unpack240_sse():
+def make_unpack240_sse(unaligned=True):
 	v = Argument(uint64_t)
 	dst_base = Argument(ptr())
-	dst_len = Argument(size_t)
-	dst_cap = Argument(size_t)
 
-	with Function("unpack240SSE", (v, dst_base, dst_len, dst_cap), target=uarch.default + isa.sse4_1) as function:
+	_MOVDQ = MOVDQU if unaligned else MOVDQA
+	name = "unpack240SSEu" if unaligned else "unpack240SSE"
+
+	with Function(name, (v, dst_base), target=uarch.default + isa.sse4_1) as function:
 		reg_dst_base = GeneralPurposeRegister64()
-		reg_dst_len = GeneralPurposeRegister64()
+		reg_dst_len = rax
+		tmp = GeneralPurposeRegister64()
 
 		LOAD.ARGUMENT(reg_dst_base, dst_base)
-		LOAD.ARGUMENT(reg_dst_len, dst_len)
-		SHR(reg_dst_len, 3)
+		MOV(reg_dst_len, 240)
+
+		MOV(tmp, 8)
+		MUL(tmp)
+		ADD(reg_dst_len, reg_dst_base)
 
 		x1 = XMMRegister()
-		tmp = GeneralPurposeRegister64()
 		MOV(tmp, 1)
 		MOVQ(x1, tmp)
 		MOV(tmp, 1)
 		PINSRQ(x1, tmp, 1)
 
 		with Loop() as loop:
-			MOVDQU([reg_dst_base], x1)
-			MOVDQU([reg_dst_base + 16], x1)
-			MOVDQU([reg_dst_base + 32], x1)
-			MOVDQU([reg_dst_base + 48], x1)
-			ADD(reg_dst_base, 64)
-			SUB(reg_dst_len, 1)
+			# unroll loop 8 times
+			end = 0x80
+			for i in xrange(0, end, 0x10):
+				_MOVDQ([reg_dst_base + i], x1)
+			ADD(reg_dst_base, end)
+			CMP(reg_dst_base, reg_dst_len)
 			JNZ(loop.begin)
 
 		RETURN()
@@ -38,19 +42,20 @@ def make_unpack240_sse():
 def make_unpack240_avx2():
 	v = Argument(uint64_t)
 	dst_base = Argument(ptr())
-	dst_len = Argument(size_t)
-	dst_cap = Argument(size_t)
 
-	with Function("unpack240AVX2", (v, dst_base, dst_len, dst_cap), target=uarch.default + isa.avx2):
+	with Function("unpack240AVX2", (v, dst_base), target=uarch.default + isa.avx2):
 		reg_dst_base = GeneralPurposeRegister64()
-		reg_dst_len = GeneralPurposeRegister64()
+		reg_dst_len = rax
+		tmp = GeneralPurposeRegister64()
 
 		LOAD.ARGUMENT(reg_dst_base, dst_base)
-		LOAD.ARGUMENT(reg_dst_len, dst_len)
-		SHR(reg_dst_len, 3)
+		MOV(reg_dst_len, 240)
+
+		MOV(tmp, 8)
+		MUL(tmp)
+		ADD(reg_dst_len, reg_dst_base)
 
 		x1 = XMMRegister()
-		tmp = GeneralPurposeRegister64()
 		MOV(tmp, 1)
 		MOVQ(x1, tmp)
 
@@ -58,10 +63,12 @@ def make_unpack240_avx2():
 		VPBROADCASTQ(r_mask, x1)
 
 		with Loop() as loop:
-			VMOVDQU([reg_dst_base], r_mask)
-			VMOVDQU([reg_dst_base + 32], r_mask)
-			ADD(reg_dst_base, 64)
-			SUB(reg_dst_len, 1)
+			# unroll loop 4 times, processing 16 int64's per iteration
+			end = 0x80
+			for i in xrange(0, end, 0x20):
+				VMOVDQU([reg_dst_base + i], r_mask)
+			ADD(reg_dst_base, end)
+			CMP(reg_dst_base, reg_dst_len)
 			JNZ(loop.begin)
 
 		RETURN()
@@ -88,7 +95,7 @@ class Unpack:
 		PXOR(x0, x0)
 
 		MOVQ(x0, tmp)
-		if n == 2:
+		if n >= 2:
 			PINSRQ(x0, tmp, 1)
 
 		x1 = XMMRegister()
@@ -97,6 +104,7 @@ class Unpack:
 			MOVQ(x1, tmp)
 
 		y0 = YMMRegister()
+		VXORPS(y0, y0, y0)
 		VINSERTI128(y0, y0, x0, 0)
 		if n == 3:
 			VINSERTI128(y0, y0, x1, 1)
@@ -106,10 +114,8 @@ class Unpack:
 	def generate(self):
 		v = Argument(uint64_t)
 		dst_base = Argument(ptr())
-		dst_len = Argument(size_t)
-		dst_cap = Argument(size_t)
 
-		with Function(self.name, (v, dst_base, dst_len, dst_cap), target=uarch.default + isa.avx2) as function:
+		with Function(self.name, (v, dst_base), target=uarch.default + isa.avx2) as function:
 			reg_v = GeneralPurposeRegister64()
 			reg_dst_base = GeneralPurposeRegister64()
 
@@ -160,8 +166,13 @@ class Unpack:
 
 			RETURN()
 
-make_unpack240_sse()
+
+make_unpack240_sse(unaligned=True)
+make_unpack240_sse(unaligned=False)
+
 make_unpack240_avx2()
+
 Unpack(60, 1).generate()
 Unpack(30, 2).generate()
 Unpack(20, 3).generate()
+Unpack(15, 4).generate()
